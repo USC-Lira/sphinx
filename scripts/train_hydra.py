@@ -6,6 +6,7 @@ import pyrallis
 import torch
 import diffusers
 import numpy as np
+from tqdm import tqdm
 
 import common_utils
 from dataset_utils.hydra_dataset import HydraDataset, HydraDatasetConfig
@@ -34,7 +35,7 @@ class MainConfig(common_utils.RunConfig):
     num_eval: int = 100
     eval_seed: int = 99999
     # log
-    save_dir: str = "exps/dense/run1"
+    save_dir: str = None
     use_wb: int = 0
 
 
@@ -98,10 +99,10 @@ def run(cfg: MainConfig):
     stopwatch = common_utils.Stopwatch()
     optim_step = 0
 
-    for _ in range(cfg.num_epoch):
+    for _ in tqdm(range(cfg.num_epoch), desc="Epoch"):
         stopwatch.reset()
 
-        for _ in range(cfg.epoch_len):
+        for _ in tqdm(range(cfg.epoch_len), desc="Epoch Step"):
             with stopwatch.time("sample"):
                 batch = dataset.sample_dp(cfg.batch_size, cfg.dp.dense_prediction_horizon, "cuda:0")
 
@@ -147,7 +148,7 @@ def run(cfg: MainConfig):
         policy_to_save = ema_policy.stable_model if ema_policy else policy
         if cfg.is_sim:
             score, eval_len = eval_sim(
-                policy_to_save, cfg.dataset.path, cfg.eval_seed, cfg.num_eval
+                policy_to_save, cfg.dataset.path, cfg.eval_seed, cfg.num_eval, cfg.save_dir
             )
             stat["eval/score"].append(score)
             stat["eval/eval_lens"].append(eval_len)
@@ -162,7 +163,7 @@ def run(cfg: MainConfig):
     assert False
 
 
-def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: int):
+def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: int, save_dir: str):
     from envs.robomimic_env import RobomimicEnvConfig
     from scripts.eval_sim import run_eval_seeds
 
@@ -170,7 +171,7 @@ def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: i
     env_cfg = pyrallis.load(RobomimicEnvConfig, open(env_cfg_path))  # type: ignore
 
     seeds = list(range(eval_seed, eval_seed + num_eval))
-    scores, eval_lens = run_eval_seeds(policy, env_cfg, seeds, 20, None, False)
+    scores, eval_lens = run_eval_seeds(policy, env_cfg, seeds, 10, save_dir, False)
     scores = list(scores.values())
     eval_lens = list(eval_lens.values())
     return np.mean(scores), np.mean(eval_lens)

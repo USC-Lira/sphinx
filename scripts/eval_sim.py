@@ -15,10 +15,12 @@ if mp.get_start_method(allow_none=True) != "spawn":
 import common_utils
 from envs.robomimic_env import RobomimicEnv, RobomimicEnvConfig
 from dataset_utils.dense_dataset import DenseInputProcessor
+from dataset_utils.hydra_dataset import InputProcessor as HydraInputProcessor
 from models.diffusion_policy import DiffusionPolicy
+from models.hydra_policy import HydraPolicy
 from models.pointcloud_dp import DP3
 from models.pointnet2_utils import farthest_point_sample
-
+from interactive_scripts.dataset_recorder import ActMode
 
 class EvalProc:
     def __init__(
@@ -91,6 +93,113 @@ class EvalProc:
         self.terminal_queue.put((self.process_id, results))
         return
 
+class EvalHydraProc:
+    def __init__(
+        self,
+        seeds,
+        process_id,
+        env_cfg: RobomimicEnvConfig,
+        camera_names: list[str],
+        image_size: int,
+        terminal_queue: mp.Queue,
+        record_dir=None,
+    ):
+        self.seeds = seeds
+        self.process_id = process_id
+
+        self.env_cfg = env_cfg
+        self.camera_names = camera_names
+        self.image_size = image_size
+        self.record_dir = record_dir
+
+        self.terminal_queue = terminal_queue
+        self.send_queue = mp.Queue()
+        self.recv_queue = mp.Queue()
+
+    def start(self):
+        env = RobomimicEnv(self.env_cfg)
+        input_processor = HydraInputProcessor(self.camera_names, self.image_size)
+
+        if self.record_dir is not None:
+            recorder = common_utils.Recorder(self.record_dir)
+        else:
+            recorder = None
+
+        results = {}
+        for seed in self.seeds:
+            np.random.seed(seed)
+
+            env.reset()
+            cached_dense_actions = []
+
+            while not env.terminal:
+                # NOTE: obs["obs"] should be a cpu tensor because it
+                # is more complicated to move cuda tensors around.
+
+                obs = env.observe()
+
+                if len(cached_dense_actions) == 0:
+                    processed_obs = input_processor.process(obs)
+                    self.send_queue.put((self.process_id, processed_obs))
+
+                    # Get the current hydra action
+                    dense_action_seq, waypoint_action, mode_probs = self.recv_queue.get()
+                    
+                    # determine action mode (waypoint vs dense)
+                    dense_action_seq = dense_action_seq.detach().cpu()
+                    waypoint_action = waypoint_action.detach().cpu()
+                    mode_probs = mode_probs.detach().cpu().numpy()
+                    mode = mode_probs[:ActMode.Terminate.value].argmax() # FIXME, predicting fp early terminates so this is a patch
+                    print(f"eval timestep recieved\ndense: {dense_action_seq}\nwaypoint: {waypoint_action}\nmode_probs: {mode_probs}, selected mode: {ActMode(mode).name}")
+
+                    for dense_action in dense_action_seq.split(1, dim=0):
+                        cached_dense_actions.append(dense_action.squeeze(0))
+
+                ### execute waypoint mode ###
+                if mode == ActMode.Waypoint.value:
+                    ee_pos, ee_euler, gripper_open = waypoint_action.split([3, 3, 1])
+                    gripper_open = 0 if (gripper_open.item() < 0.5) else 1
+                    env.move_to(ee_pos.numpy(), ee_euler.numpy(), gripper_open, recorder=recorder)
+                    cached_dense_actions = []
+
+                    # record current observation as a waypoint
+                    if recorder is not None:
+                        waypoint_obs = env.observe()
+                        waypoint_obs["agentview_image"][:5, :, :] = (255,0,0) # have the top few rows be red for waypoint
+                        recorder.add_numpy(waypoint_obs, ["agentview_image"])
+
+                ###
+
+                ### execute dense mode ###
+                else:
+                    if recorder is not None: 
+                        obs["agentview_image"][:5, :, :] = (53, 81, 92) # have the top few rows be sky blue for dense actions
+                        recorder.add_numpy(obs, ["agentview_image"])
+                    
+                    dense_action = cached_dense_actions.pop(0)
+                    ee_pos, ee_euler, gripper_open = dense_action.split([3, 3, 1])
+                    dense_action = np.concatenate([ee_pos, ee_euler, [gripper_open.item()]]).astype(np.float32)      
+                    env.apply_action(ee_pos.numpy(), ee_euler.numpy(), gripper_open.item(), is_delta=True)
+                ###
+
+                if env.reward > 0:
+                    # early terminate if succeed
+                    break
+
+            if recorder is not None:
+                recorder.add_numpy(env.observe(), ["agentview_image"])
+
+            results[seed] = (float(env.reward), env.num_step)
+            if recorder is not None:
+                recorder.save(f"s{seed}")
+
+        self.terminal_queue.put((self.process_id, results))
+
+        # Cleanup
+        del env
+        del recorder
+
+        return
 
 class EvalPcdProc:
     def __init__(
@@ -207,6 +316,16 @@ def run_eval_seeds(
                 terminal_queue,
                 save_dir,
             )
+        elif isinstance(agent, HydraPolicy):
+            proc = EvalHydraProc(
+                proc_seeds,
+                i,
+                env_cfg,
+                agent.camera_views,
+                agent.obs_shape[-1] if len(agent.obs_shape) == 3 else 0,
+                terminal_queue,
+                record_dir=save_dir,
+            )
         else:
             proc = EvalProc(
                 proc_seeds,
@@ -257,7 +376,17 @@ def run_eval_seeds(
                 continue
 
             batch_obs = {k: torch.stack(v).cuda() for k, v in obses.items()}
-            batch_action = agent.act(batch_obs)
+
+            if isinstance(agent, HydraPolicy):
+                batch_dense_action, batch_waypoint_action, batch_mode_probs = agent.act(batch_obs)
+                batch_action = list(zip(
+                    batch_dense_action.detach().cpu(),
+                    batch_waypoint_action.detach().cpu(),
+                    batch_mode_probs.detach().cpu(),
+                ))
+            else:
+                batch_action = agent.act(batch_obs)
+
             for idx, action in zip(idxs, batch_action):
                 put_queues[idx].put(action)
 

@@ -119,6 +119,14 @@ class HydraDataset:
             for t, timestep in enumerate(raw_episode):
                 if timestep["mode"] != ActMode.Waypoint:
                     dense_action = timestep["action"]
+
+                    # for dense actions, the next waypoint should be the next state
+                    if timestep["mode"] == ActMode.Dense:
+                        # utilize current timestep as the waypoint if current step is the terminal step
+                        next_timestep = raw_episode[t + 1] if (t + 1 < len(raw_episode)) else timestep
+                        
+                        # waypoint action is target position, not delta
+                        waypoint_action = next_timestep["obs"]["proprio"][:7]
                 else:
                     waypoint_action = timestep["action"]
                     dense_action = (

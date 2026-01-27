@@ -41,7 +41,7 @@ class Recorder:
 
     def save(self, name, fps=10):
         path = os.path.join(self.save_dir, f"{name}.mp4")
-        # print(f"saving video to {path}")
+        print(f"saving video to {path}")
         # control freq defaults to 0
         imageio.mimsave(path, self.combined_frames, fps=fps)
         self.combined_frames.clear()

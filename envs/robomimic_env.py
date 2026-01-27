@@ -1,6 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 import pprint
 import numpy as np
 import cv2
@@ -11,6 +11,7 @@ import robosuite
 from robosuite.utils import camera_utils
 from interactive_scripts.vision_utils.pc_utils import deproject
 from interactive_scripts.dataset_recorder import DatasetRecorder, ActMode
+from common_utils.record import Recorder
 from envs.robot_utils import Proprio, WaypointReach, WaypointReachConfig, MoveErrorPlot
 
 
@@ -172,7 +173,7 @@ class RobomimicEnv:
         target_pos: np.ndarray,
         target_euler: np.ndarray,
         gripper_open: float,
-        recorder: Optional[DatasetRecorder] = None,
+        recorder: Optional[Union[DatasetRecorder, Recorder]] = None,
         render: bool = False,
         plot: bool = False,
     ):
@@ -205,7 +206,11 @@ class RobomimicEnv:
 
             if recorder is not None:
                 action = np.concatenate([delta_pos, delta_euler, [self.curr_gripper_open]])
-                recorder.record(ActMode.Interpolate, obs_for_record, action, reward=self.reward)
+                if isinstance(recorder, Recorder):
+                    obs_for_record["agentview_image"][:5, :, :] = (255, 182, 193)
+                    recorder.add_numpy(obs_for_record, ["agentview_image"])
+                else:
+                    recorder.record(ActMode.Interpolate, obs_for_record, action, reward=self.reward)
 
             if plot:
                 pos_plotter.add(self.observe_proprio().eef_pos, target_pos, delta_pos)
@@ -242,7 +247,11 @@ class RobomimicEnv:
 
             if recorder is not None:
                 action = np.concatenate([np.zeros(3), np.zeros(3), [gripper_open]])
-                recorder.record(ActMode.Interpolate, obs_for_record, action, reward=self.reward)
+                if isinstance(recorder, Recorder):
+                    obs_for_record["agentview_image"][:5, :, :] = (255, 182, 193)
+                    recorder.add_numpy(obs_for_record, ["agentview_image"])
+                else:
+                    recorder.record(ActMode.Interpolate, obs_for_record, action, reward=self.reward)
 
             curr_width = self.observe_proprio().gripper_open
             if gripper_open == 1 and np.abs(curr_width - 1) < 0.01:
