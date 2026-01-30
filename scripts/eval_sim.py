@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.multiprocessing as mp
 from typing import Union
+from tqdm import tqdm
 
 if mp.get_start_method(allow_none=True) != "spawn":
     mp.set_start_method("spawn")
@@ -132,6 +133,9 @@ class EvalHydraProc:
             env.reset()
             cached_dense_actions = []
 
+            # Keep track of evaluation progress per seed
+            pbar = tqdm(desc=f"Eval seed {seed}", unit=" step")
+
             while not env.terminal:
                 # NOTE: obs["obs"] should be a cpu tensor because it
                 # is more complicated to move cuda tensors around.
@@ -150,7 +154,7 @@ class EvalHydraProc:
                     waypoint_action = waypoint_action.detach().cpu()
                     mode_probs = mode_probs.detach().cpu().numpy()
                     mode = mode_probs[:ActMode.Terminate.value].argmax() # FIXME, predicting fp early terminates so this is a patch
-                    print(f"eval timestep recieved\ndense: {dense_action_seq}\nwaypoint: {waypoint_action}\nmode_probs: {mode_probs}, selected mode: {ActMode(mode).name}")
+                    # print(f"eval timestep recieved\ndense: {dense_action_seq}\nwaypoint: {waypoint_action}\nmode_probs: {mode_probs}, selected mode: {ActMode(mode).name}")
 
                     for dense_action in dense_action_seq.split(1, dim=0):
                         cached_dense_actions.append(dense_action.squeeze(0))
@@ -171,9 +175,9 @@ class EvalHydraProc:
                 ###
 
                 ### execute dense mode ###
-                else:
+                elif mode == ActMode.Dense.value:
                     if recorder is not None: 
-                        obs["agentview_image"][:5, :, :] = (53, 81, 92) # have the top few rows be sky blue for dense actions
+                        obs["agentview_image"][:5, :, :] = (135, 206, 235) # have the top few rows be sky blue for dense actions
                         recorder.add_numpy(obs, ["agentview_image"])
                     
                     dense_action = cached_dense_actions.pop(0)
@@ -185,6 +189,8 @@ class EvalHydraProc:
                 if env.reward > 0:
                     # early terminate if succeed
                     break
+
+                pbar.update(1)
 
             if recorder is not None:
                 recorder.add_numpy(env.observe(), ["agentview_image"])

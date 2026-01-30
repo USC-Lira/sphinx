@@ -109,7 +109,7 @@ class HydraDataset:
 
         all_episodes: list[list[dict]] = []
 
-        TERMINATE_WINDOW = 10
+        TERMINATE_WINDOW = 0
 
         for episode_idx, f in enumerate(sorted(npz_files)):
             success_msg = ""

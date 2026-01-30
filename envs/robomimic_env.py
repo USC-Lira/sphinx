@@ -165,6 +165,9 @@ class RobomimicEnv:
         self.obs, self.reward, self.terminal, _ = self.env.step(action)
         self.num_step += 1
 
+        # also set env to terminal if num_step is equal to or exceeds max_len
+        self.terminal = self.terminal or self.num_step >= self.cfg.max_len
+
         if self.verbose:
             print(f"env: {self.num_step}/{self.cfg.max_len} step, reward: {self.reward}")
 

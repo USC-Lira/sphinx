@@ -177,6 +177,7 @@ class HydraPolicy(nn.Module):
             waypoint_action = waypoint_action.cpu()
             target_mode_probs = target_mode_probs.cpu()
 
+        # print(f"cached_image_emb: {cached_image_emb}\ndense_action: {dense_action}\nwaypoint_action: {waypoint_action}\ntarget_mode_probs: {target_mode_probs}")
         return dense_action, waypoint_action, target_mode_probs
 
     def loss(self, batch, avg=True, aug=True):
@@ -234,7 +235,8 @@ class HydraPolicy(nn.Module):
         ### mode pred ###
         target_modes_logits = self.mode_head(obs_emb)
         mode_loss = F.cross_entropy(target_modes_logits, target_modes)
-        target_modes_pred = nn.functional.softmax(target_modes_logits).argmax(dim=1)
+        # print(f"target mode logits: {target_modes_logits}\ntarget modes: {target_modes}\nmode loss: {mode_loss}")
+        target_modes_pred = nn.functional.softmax(target_modes_logits, dim=1).argmax(dim=1)
         mode_acc = (target_modes_pred == target_modes).float().mean().item()
         ###
 

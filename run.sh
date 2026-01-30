@@ -8,9 +8,9 @@
 #SBATCH --error=slurm_jobs/%x_%j.err
 
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
-#SBATCH --mem=256G
-#SBATCH --time=24:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=48G
+#SBATCH --time=1-00:00:00
 # choose from A100, A40, V100, P100, K40
 # eval "$(ssh-agent -s)" ssh-add ~/.ssh/id_rsa
 # sinfo -t idle -o "%N %G"
@@ -33,7 +33,7 @@ conda activate sphinx_env
 # python scripts/train_dense.py --config_path cfgs/dense/dp_square.yaml
 # python scripts/train_dp3.py --config_path cfgs/dense/dp3_square.yaml
 # python scripts/train_waypoint.py --config_path cfgs/waypoint/square.yaml
-python -u scripts/train_hydra.py --config_path cfgs/hydra/square_hydra.yaml
+python -u scripts/train_hydra.py --config_path cfgs/hydra/square_hydra_awe.yaml
 
 # python -u interactive_scripts/record_sim.py --data_folder "data/auto/square" --task "square"
 

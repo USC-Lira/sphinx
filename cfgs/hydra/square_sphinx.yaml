@@ -1,6 +1,7 @@
 dataset:
   path: ../data_sphinx/square
   camera_views: agentview_image
+  image_size: 84
 dp:
   shift_pad: 6
   cond_unet:
@@ -8,7 +9,7 @@ dp:
     use_prop: 1
   use_ddpm: 0
 num_epoch: 20
-epoch_len: 50000
+epoch_len: 10000
 num_eval: 10
 use_ema: 1
 ema_tau: 0.01
