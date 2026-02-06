@@ -1,5 +1,5 @@
 dataset:
-  path: ../data_hydra/sphinx_compatible_awe_delta/square/ph/err_0.005/data
+  path: ../data_hydra/sphinx_compatible_waypoint_delta/square/ph/err_0.005/data
   camera_views: agentview_image+robot0_eye_in_hand_image
   image_size: 84
 dp:
@@ -19,5 +19,5 @@ weight_decay: 1e-6
 cosine_schedule: 1
 lr_warm_up_steps: 500
 use_wb: 1
-save_dir: exps/hydra/hydra_awe
+save_dir: exps/hydra/hydra_waypoint
 is_sim: 1

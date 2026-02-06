@@ -23,7 +23,7 @@ def reformat_episode(data, start, end):
         if (data["click_state"][t].item() == 1 and t-1 >= start and data["mode"][t-1, 0].item() == 0) or (data["mode"][t, 0].item() == 0 and t == end):
             ee_pos = data["robot0_eef_pos"][t]
             ee_euler = data["robot0_eef_eul"][t]
-            gripper = int(round(data["robot0_gripper_qpos"][t, 0]))
+            gripper = data["robot0_gripper_qpos"][t, 0]
 
             wp_action = np.concatenate([
                 ee_pos,
@@ -62,6 +62,9 @@ def reformat_episode(data, start, end):
             "target/orientation": data["target/orientation"][t].astype(np.float32),
             "target/orientation_eul": data["target/orientation_eul"][t].astype(np.float32),
         }
+        if "robot0_eye_in_hand_image" in data:
+            obs["robot0_eye_in_hand_image"] = data["robot0_eye_in_hand_image"][t].astype(np.uint8)
+            
         # proprio is a flattened concatenation of ee_pos, ee_euler, gripper_open
         proprio = np.concatenate([obs["ee_pos"], obs["ee_euler"], obs["gripper_open"]], axis=0)
         obs["proprio"] = proprio
@@ -90,7 +93,11 @@ def reformat_episode(data, start, end):
         if insert_wp:
             waypoint_idx += 1
             print(f"Extracting waypoint {waypoint_idx} from {len(waypoints)} waypoints")
-            assert waypoint_idx < len(waypoints), f"Waypoint index out of range: {waypoint_idx} vs {len(waypoints)}"
+
+            if waypoint_idx == len(waypoints):
+                print(f"Waypoint index out of range: {waypoint_idx} vs {len(waypoints)}")
+                return None
+            
             wp = waypoints[waypoint_idx]
 
             demo.append({
@@ -125,27 +132,17 @@ def reformat_episode(data, start, end):
 
     return demo
 
-
-def process_episode(in_file, out_dir, demo_idx, start, end):
-    # Load dataset INSIDE the process
+def process_episode_wrapper(args_tuple):
+    in_file, out_dir, demo_idx, start, end = args_tuple
     data = np.load(in_file, allow_pickle=True, mmap_mode="r")
-
     demo_steps = reformat_episode(data, start, end)
-
+    if not demo_steps: 
+        return
     out_path = os.path.join(out_dir, f"demo{demo_idx:05d}.npz")
     np.savez_compressed(out_path, demo_steps)
-
-    print(f"[PID {os.getpid()}] Saved {out_path} ({len(demo_steps)} steps)")
-
-    # Explicit cleanup (process will exit anyway, but this helps peak)
-    del demo_steps
-    del data
+    print(f"Saved {out_path} ({len(demo_steps)} steps)")
+    del demo_steps, data
     gc.collect()
-
-
-# ==========================================================
-# Main: load, split episodes, save demos
-# ==========================================================
 
 def main():
     parser = argparse.ArgumentParser()
@@ -155,29 +152,23 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
 
-    # Load ONCE just to get episode boundaries
     data = np.load(args.in_file, allow_pickle=True, mmap_mode="r")
     done = data["done"].astype(bool)
     done_idxs = np.where(done)[0]
-    del data  # important
+    del data
 
     print(f"Found {len(done_idxs)} episodes")
 
+    # Build task list
+    tasks = []
     start = 0
-    demo_idx = 0
+    for demo_idx, end in enumerate(done_idxs):
+        tasks.append((args.in_file, args.out_dir, demo_idx, start, int(end)))
+        start = int(end) + 1
 
-    for end in done_idxs:
-        end = int(end)
-
-        p = mp.Process(
-            target=process_episode,
-            args=(args.in_file, args.out_dir, demo_idx, start, end),
-        )
-        p.start()
-        p.join()   # wait → memory fully released
-
-        demo_idx += 1
-        start = end + 1
+    # Process in parallel - adjust number based on your CPU cores
+    with mp.Pool(processes=8) as pool:
+        pool.map(process_episode_wrapper, tasks)
 
     print("Done.")
 

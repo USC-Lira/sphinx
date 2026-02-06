@@ -1,6 +1,6 @@
 dataset:
-  path: ../data_hydra/sphinx_compatible/square/ph/data
-  camera_views: agentview_image
+  path: ../data_hydra/sphinx_compatible_delta/square/ph/data
+  camera_views: agentview_image+robot0_eye_in_hand_image
   image_size: 84
 dp:
   shift_pad: 6
@@ -8,16 +8,18 @@ dp:
     kernel_size: 5
     use_prop: 1
   use_ddpm: 0
-num_epoch: 20
+  dense_action_horizon: 1
+  dense_prediction_horizon: 8
+num_epoch: 40
 epoch_len: 10000
 num_eval: 10
 use_ema: 1
 ema_tau: 0.01
-batch_size: 256
+batch_size: 64
 lr: 1e-4
 weight_decay: 1e-6
 cosine_schedule: 1
 lr_warm_up_steps: 500
 use_wb: 1
-save_dir: exps/hydra/hydra_data_recorder
+save_dir: exps/hydra/hydra
 is_sim: 1

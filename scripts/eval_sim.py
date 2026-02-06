@@ -133,6 +133,8 @@ class EvalHydraProc:
             env.reset()
             cached_dense_actions = []
 
+            freeze_counter = 0
+
             # Keep track of evaluation progress per seed
             pbar = tqdm(desc=f"Eval seed {seed}", unit=" step")
 
@@ -159,10 +161,13 @@ class EvalHydraProc:
                     for dense_action in dense_action_seq.split(1, dim=0):
                         cached_dense_actions.append(dense_action.squeeze(0))
 
+                prev_num_step = env.num_step
+
                 ### execute waypoint mode ###
                 if mode == ActMode.Waypoint.value:
                     ee_pos, ee_euler, gripper_open = waypoint_action.split([3, 3, 1])
                     gripper_open = 0 if (gripper_open.item() < 0.5) else 1
+                    print("gripper open:", gripper_open)
                     env.move_to(ee_pos.numpy(), ee_euler.numpy(), gripper_open, recorder=recorder)
                     cached_dense_actions = []
 
@@ -186,8 +191,16 @@ class EvalHydraProc:
                     env.apply_action(ee_pos.numpy(), ee_euler.numpy(), gripper_open.item(), is_delta=True)
                 ###
 
+                if env.num_step == prev_num_step:
+                    freeze_counter += 1
+                else:
+                    freeze_counter = 0
+
                 if env.reward > 0:
                     # early terminate if succeed
+                    break
+
+                if freeze_counter >= 3:
                     break
 
                 pbar.update(1)

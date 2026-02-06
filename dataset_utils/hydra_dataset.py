@@ -119,6 +119,7 @@ class HydraDataset:
             for t, timestep in enumerate(raw_episode):
                 if timestep["mode"] != ActMode.Waypoint:
                     dense_action = timestep["action"]
+                    dense_action[6] = 1 if dense_action[6] < 0 else 0 # FIXME: COMMENT OUT FOR SPHINX DATA
 
                     # for dense actions, the next waypoint should be the next state
                     if timestep["mode"] == ActMode.Dense:
@@ -127,13 +128,11 @@ class HydraDataset:
                         
                         # waypoint action is target position, not delta
                         waypoint_action = next_timestep["obs"]["proprio"][:7]
+                        waypoint_action[6] = dense_action[6]  # keep the gripper action the same
                 else:
                     waypoint_action = timestep["action"]
-                    dense_action = (
-                        raw_episode[t + 1]["action"]
-                        if (t + 1 < len(raw_episode))
-                        else np.array([0, 0, 0, 0, 0, 0, 1])
-                    )
+                    waypoint_action[6] = 1 if waypoint_action[6] > 0.02 else 0  # FIXME: COMMENT OUT FOR SPHINX DATA
+                    continue
 
                 target_mode = (
                     timestep["mode"].value
