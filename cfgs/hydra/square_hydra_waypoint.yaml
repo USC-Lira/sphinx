@@ -2,15 +2,26 @@ dataset:
   path: ../data_hydra/sphinx_compatible_waypoint_delta/square/ph/err_0.005/data
   camera_views: agentview_image+robot0_eye_in_hand_image
   image_size: 84
+  save_demo_dir: exps/hydra/waypoint
+  proprio_euler_quat_wrapper:
+    prop_dim: 7
+    rotation_start_indices: [3]
+    from_euler: True  
+    policy_in_euler: False
+  action_euler_quat_wrapper:
+    prop_dim: 7
+    rotation_start_indices: [3]
+    from_euler: True  
+    eval_in_euler: True
 dp:
   shift_pad: 6
   cond_unet:
     kernel_size: 5
     use_prop: 1
   use_ddpm: 0
-num_epoch: 40
+num_epoch: 50
 epoch_len: 10000
-num_eval: 10
+num_eval: 100
 use_ema: 1
 ema_tau: 0.01
 batch_size: 64
@@ -19,5 +30,5 @@ weight_decay: 1e-6
 cosine_schedule: 1
 lr_warm_up_steps: 500
 use_wb: 1
-save_dir: exps/hydra/hydra_waypoint
+save_dir: exps/hydra/waypoint
 is_sim: 1

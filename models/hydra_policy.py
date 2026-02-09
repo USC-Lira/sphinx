@@ -162,10 +162,10 @@ class HydraPolicy(nn.Module):
         dense_action = self.dense_action_normalizer.denormalize(dense_action)
 
         waypoint_action = self.waypoint_head(cached_image_emb)
-        waypoint_action[:, 6] = nn.functional.sigmoid(waypoint_action[:, 6])
+        waypoint_action[:, -1] = nn.functional.sigmoid(waypoint_action[:, -1])
 
         target_mode_logits = self.mode_head(cached_image_emb)
-        target_mode_probs = nn.functional.softmax(target_mode_logits)
+        target_mode_probs = nn.functional.softmax(target_mode_logits, dim=1)
         #target_mode = target_mode_probs.argmax()
 
         if unsqueezed:
@@ -219,16 +219,16 @@ class HydraPolicy(nn.Module):
 
         ### waypoint pred ###
         waypoint_actions_logits = self.waypoint_head(obs_emb)
-        gripper_actions_logits = waypoint_actions_logits[:, 6]
+        gripper_actions_logits = waypoint_actions_logits[:, -1]
         waypoint_pose_loss = nn.functional.mse_loss(
-            waypoint_actions_logits[:, :6], waypoint_actions[:, :6]
+            waypoint_actions_logits[:, :-1], waypoint_actions[:, :-1]
         )
         waypoint_gripper_loss = F.binary_cross_entropy_with_logits(
-            gripper_actions_logits, waypoint_actions[:, 6]
+            gripper_actions_logits, waypoint_actions[:, -1]
         )
         waypoint_gripper_preds = (nn.functional.sigmoid(gripper_actions_logits) > 0.5).float()
         waypoint_gripper_acc = (
-            (waypoint_gripper_preds == waypoint_actions[:, 6]).float().mean().item()
+            (waypoint_gripper_preds == waypoint_actions[:, -1]).float().mean().item()
         )
         ###
 

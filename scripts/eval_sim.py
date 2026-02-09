@@ -7,7 +7,7 @@ import pyrallis
 import numpy as np
 import torch
 import torch.multiprocessing as mp
-from typing import Union
+from typing import Optional, Union
 from tqdm import tqdm
 
 if mp.get_start_method(allow_none=True) != "spawn":
@@ -17,6 +17,7 @@ import common_utils
 from envs.robomimic_env import RobomimicEnv, RobomimicEnvConfig
 from dataset_utils.dense_dataset import DenseInputProcessor
 from dataset_utils.hydra_dataset import InputProcessor as HydraInputProcessor
+from dataset_utils.hydra_dataset import EulerQuatRotationWrapper, EulerQuatRotationWrapperConfig
 from models.diffusion_policy import DiffusionPolicy
 from models.hydra_policy import HydraPolicy
 from models.pointcloud_dp import DP3
@@ -104,6 +105,8 @@ class EvalHydraProc:
         image_size: int,
         terminal_queue: mp.Queue,
         record_dir=None,
+        proprio_wrapper_cfg: Optional[EulerQuatRotationWrapperConfig] = None,
+        action_wrapper_cfg: Optional[EulerQuatRotationWrapperConfig] = None,
     ):
         self.seeds = seeds
         self.process_id = process_id
@@ -117,9 +120,15 @@ class EvalHydraProc:
         self.send_queue = mp.Queue()
         self.recv_queue = mp.Queue()
 
+        self.proprio_wrapper_cfg = proprio_wrapper_cfg
+        self.action_wrapper_cfg = action_wrapper_cfg
+
     def start(self):
         env = RobomimicEnv(self.env_cfg)
-        input_processor = HydraInputProcessor(self.camera_names, self.image_size)
+
+        proprio_euler_quat_wrapper = EulerQuatRotationWrapper.from_config(self.proprio_wrapper_cfg) if self.proprio_wrapper_cfg else None
+        action_euler_quat_wrapper = EulerQuatRotationWrapper.from_config(self.action_wrapper_cfg) if self.action_wrapper_cfg else None
+        input_processor = HydraInputProcessor(self.camera_names, self.image_size, proprio_euler_quat_wrapper)
 
         if self.record_dir is not None:
             recorder = common_utils.Recorder(self.record_dir)
@@ -161,13 +170,29 @@ class EvalHydraProc:
                     for dense_action in dense_action_seq.split(1, dim=0):
                         cached_dense_actions.append(dense_action.squeeze(0))
 
+                    # ensure that waypoint and dense actions have the proper rotation representation
+                    if action_euler_quat_wrapper: 
+                        for i in range(len(cached_dense_actions)):
+                            cached_dense_actions[i] = torch.from_numpy(
+                                action_euler_quat_wrapper.process_for_eval(cached_dense_actions[i], is_delta=True)
+                            ).float()
+
+                        waypoint_action = torch.from_numpy(
+                            action_euler_quat_wrapper.process_for_eval(waypoint_action, is_delta=False)
+                        ).float()
+ 
+                # tracks prev steps for freeze counter code
                 prev_num_step = env.num_step
+
+                # testing
+                # print("eval proprio:{}\ntarget_mode:{}\nwaypoint_action:{}\ndense_action:{}\n".format(
+                #     obs["proprio"], mode, waypoint_action, cached_dense_actions[0]
+                # ))
 
                 ### execute waypoint mode ###
                 if mode == ActMode.Waypoint.value:
                     ee_pos, ee_euler, gripper_open = waypoint_action.split([3, 3, 1])
                     gripper_open = 0 if (gripper_open.item() < 0.5) else 1
-                    print("gripper open:", gripper_open)
                     env.move_to(ee_pos.numpy(), ee_euler.numpy(), gripper_open, recorder=recorder)
                     cached_dense_actions = []
 
@@ -200,7 +225,8 @@ class EvalHydraProc:
                     # early terminate if succeed
                     break
 
-                if freeze_counter >= 3:
+                if freeze_counter >= 10:
+                    print(f"Terminating early due to freeze at step {env.num_step} for seed {seed}")
                     break
 
                 pbar.update(1)
@@ -306,6 +332,8 @@ def run_eval_seeds(
     num_proc: int,
     save_dir,
     verbose,
+    proprio_wrapper_cfg: Optional[EulerQuatRotationWrapperConfig] = None, 
+    action_wrapper_cfg: Optional[EulerQuatRotationWrapperConfig] = None,
 ) -> tuple[dict, dict]:
     # env_params["device"] = "cpu"  # avoid sending cuda across processes
     env_cfg = copy.deepcopy(env_cfg)
@@ -344,6 +372,8 @@ def run_eval_seeds(
                 agent.obs_shape[-1] if len(agent.obs_shape) == 3 else 0,
                 terminal_queue,
                 record_dir=save_dir,
+                proprio_wrapper_cfg=proprio_wrapper_cfg,
+                action_wrapper_cfg=action_wrapper_cfg,
             )
         else:
             proc = EvalProc(

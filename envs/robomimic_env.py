@@ -160,7 +160,8 @@ class RobomimicEnv:
         assert is_delta, "positional not implemented yet"
         # gripper_open = 1 (open) -> gripper_action: -1
         # gripper_open = 0 (closed) -> gripper_action: 1
-        gripper_action = 1 - 2 * gripper_open
+        # gripper_open = -1 (no change) -> gripper_action: 0
+        gripper_action = 0 if gripper_open == -1 else 1 - 2 * gripper_open 
         action = np.concatenate([ee_pos, ee_euler, [gripper_action]]).astype(np.float32)
         self.obs, self.reward, self.terminal, _ = self.env.step(action)
         self.num_step += 1
@@ -205,7 +206,7 @@ class RobomimicEnv:
             if recorder is not None:
                 obs_for_record = self.observe()
 
-            self.apply_action(delta_pos, delta_euler, self.curr_gripper_open)
+            self.apply_action(delta_pos, delta_euler, -1) # do not change gripper during movement portion of waypoint, especially because curr_gripper_open is not properly updated during dense modes
 
             if recorder is not None:
                 action = np.concatenate([delta_pos, delta_euler, [self.curr_gripper_open]])
@@ -230,9 +231,10 @@ class RobomimicEnv:
             rot_plotter.plot()
 
         assert gripper_open == 0 or gripper_open == 1
-        if self.curr_gripper_open != gripper_open:
-            self.update_gripper(gripper_open, recorder, render)
-            self.curr_gripper_open = gripper_open
+
+        # curr_gripper_open is not properly updated during dense modes, so we should always call update_gripper to ensure the gripper state is correct
+        self.update_gripper(gripper_open, recorder, render)
+        self.curr_gripper_open = gripper_open
 
     def update_gripper(
         self, gripper_open, recorder: Optional[DatasetRecorder], render: bool = False

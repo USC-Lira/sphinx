@@ -1,16 +1,18 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from collections import defaultdict, namedtuple
 import os
+from typing import Optional
 import numpy as np
 import torch
 import torchvision.transforms as transforms
+from tools.replay_sim import replay_processed_episodes
 
 from common_utils import get_all_files
 from interactive_scripts.dataset_recorder import ActMode
-
+from dataset_utils.rotation_wrappers import EulerQuatRotationWrapper, EulerQuatRotationWrapperConfig
 
 class InputProcessor:
-    def __init__(self, camera_names: list[str], target_size: int):
+    def __init__(self, camera_names: list[str], target_size: int, proprio_wrapper: Optional[EulerQuatRotationWrapper] = None):
         self.camera_names = camera_names
         self.target_size = target_size
         self.rescale_transform = transforms.Resize(
@@ -18,12 +20,15 @@ class InputProcessor:
             interpolation=transforms.InterpolationMode.BICUBIC,
             antialias=True,  # type: ignore
         )
+        self.proprio_wrapper = proprio_wrapper
 
     def process(self, obs: dict):
         processed_obs = {}
         for k, v in obs.items():
             if k == "proprio":
                 processed_obs["prop"] = torch.from_numpy(v.astype(np.float32))
+                if self.proprio_wrapper is not None:
+                    processed_obs["prop"] = torch.from_numpy(self.proprio_wrapper.process_for_policy(v, is_delta=False).astype(np.float32))
 
             if k not in self.camera_names:
                 continue
@@ -42,12 +47,14 @@ DATASETS = {
     "cups2": "data/cups2",
 }
 
-
 @dataclass
 class HydraDatasetConfig:
     path: str = ""
     camera_views: str = "wrist_view"
     image_size: int = 96
+    proprio_euler_quat_wrapper: Optional[EulerQuatRotationWrapperConfig] = None
+    action_euler_quat_wrapper: Optional[EulerQuatRotationWrapperConfig] = None
+    save_demo_dir: Optional[str] = None
 
     def __post_init__(self):
         DATASETS = {
@@ -62,10 +69,26 @@ class HydraDatasetConfig:
 class HydraDataset:
     def __init__(self, cfg: HydraDatasetConfig, load_only_one=False):
         self.cfg = cfg
+
+        # initialize the proprioception and action wrapper if needed
+        if cfg.proprio_euler_quat_wrapper is not None:
+            self.proprio_euler_quat_wrapper = EulerQuatRotationWrapper.from_config(cfg.proprio_euler_quat_wrapper)
+        else: 
+            self.proprio_euler_quat_wrapper = None
+
+        if cfg.action_euler_quat_wrapper is not None:
+            self.action_euler_quat_wrapper = EulerQuatRotationWrapper.from_config(cfg.action_euler_quat_wrapper)
+        else: 
+            self.action_euler_quat_wrapper = None
+
+        if cfg.save_demo_dir is not None:
+            self.save_demo_dir = os.path.join(cfg.save_demo_dir, "replayed_demos")
+            os.makedirs(self.save_demo_dir, exist_ok=True)
+
         # load_only_one makes loading faster for non-training purpose
         self.load_only_one = load_only_one
         self.camera_views = cfg.camera_views.split("+")
-        self.input_processor = InputProcessor(self.camera_views, cfg.image_size)
+        self.input_processor = InputProcessor(self.camera_views, cfg.image_size, self.proprio_euler_quat_wrapper)
 
         self.episodes: list[list[dict]] = self._load_and_process_episodes(cfg.path)
         self.idx2entry = {}  # map from a single number to
@@ -119,7 +142,7 @@ class HydraDataset:
             for t, timestep in enumerate(raw_episode):
                 if timestep["mode"] != ActMode.Waypoint:
                     dense_action = timestep["action"]
-                    dense_action[6] = 1 if dense_action[6] < 0 else 0 # FIXME: COMMENT OUT FOR SPHINX DATA
+                    dense_action[-1] = 1 if dense_action[-1] < 0 else 0 # FIXME: COMMENT OUT FOR SPHINX DATA
 
                     # for dense actions, the next waypoint should be the next state
                     if timestep["mode"] == ActMode.Dense:
@@ -128,10 +151,10 @@ class HydraDataset:
                         
                         # waypoint action is target position, not delta
                         waypoint_action = next_timestep["obs"]["proprio"][:7]
-                        waypoint_action[6] = dense_action[6]  # keep the gripper action the same
+                        waypoint_action[-1] = dense_action[-1]  # keep the gripper action the same
                 else:
                     waypoint_action = timestep["action"]
-                    waypoint_action[6] = 1 if waypoint_action[6] > 0.02 else 0  # FIXME: COMMENT OUT FOR SPHINX DATA
+                    waypoint_action[-1] = 1 if waypoint_action[-1] > 0.02 else 0  # FIXME: COMMENT OUT FOR SPHINX DATA
                     continue
 
                 target_mode = (
@@ -142,6 +165,11 @@ class HydraDataset:
 
                 if target_mode == ActMode.Interpolate.value:
                     target_mode = ActMode.Waypoint.value
+
+                # Update actions to the desired rotation representation for the policy
+                if self.action_euler_quat_wrapper is not None:
+                    dense_action = self.action_euler_quat_wrapper.process_for_policy(dense_action, is_delta=True)
+                    waypoint_action = self.action_euler_quat_wrapper.process_for_policy(waypoint_action, is_delta=False)
 
                 processed_timestep = {
                     "target_mode": torch.tensor(target_mode),
@@ -155,9 +183,17 @@ class HydraDataset:
                 if not success_msg and timestep.get("reward", 0) > 0:
                     success_msg = f", success since {len(episode)}"
 
+                print("proprio:{}\ntarget_mode:{}\nwaypoint_action:{}\ndense_action:{}\n".format(
+                    processed_timestep["prop"], processed_timestep["target_mode"],
+                    processed_timestep["waypoint_action"], processed_timestep["dense_action"]
+                ))
+
             print(f"episode {episode_idx}, len: {len(episode)}" + success_msg)
             all_episodes.append(episode)
 
+        if self.save_demo_dir is not None:
+            replay_processed_episodes(episodes=all_episodes, dataset_path=self.cfg.path, save_dir=self.save_demo_dir, max_demos=3, action_wrapper=self.action_euler_quat_wrapper, camera_view="agentview_image")
+        
         return all_episodes
 
     def get_dense_action_range(self) -> tuple[torch.Tensor, torch.Tensor]:
@@ -173,6 +209,8 @@ class HydraDataset:
         for i in range(len(action_min)):
             print(f"  dim {i}, min: {action_min[i].item():.5f}, max: {action_max[i].item():.5f}")
 
+        self.action_min = action_min
+        self.action_max = action_max
         return action_min, action_max
 
     def _convert_to_batch(self, samples, device):
@@ -203,7 +241,11 @@ class HydraDataset:
                 actions.append(episode[action_idx]["dense_action"])
                 valid_dense_actions.append(1)
             else:
-                actions.append(torch.zeros_like(actions[-1]))
+                # actions.append(torch.zeros_like(actions[-1]))
+                # pad with mean actions instead of zeros to ensure zero actions after normalization
+                if self.action_min is None or self.action_max is None:
+                    self.action_min, self.action_max = self.get_dense_action_range()
+                actions.append((self.action_min + self.action_max) / 2)
                 valid_dense_actions.append(0)
 
         valid_dense_actions = torch.tensor(valid_dense_actions, dtype=torch.float32)

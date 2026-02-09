@@ -148,7 +148,13 @@ def run(cfg: MainConfig):
         policy_to_save = ema_policy.stable_model if ema_policy else policy
         if cfg.is_sim:
             score, eval_len = eval_sim(
-                policy_to_save, cfg.dataset.path, cfg.eval_seed, cfg.num_eval, cfg.save_dir
+                policy_to_save, 
+                cfg.dataset.path, 
+                cfg.eval_seed, 
+                cfg.num_eval, 
+                cfg.save_dir, 
+                getattr(cfg.dataset, "proprio_euler_quat_wrapper", None), 
+                getattr(cfg.dataset, "action_euler_quat_wrapper", None)
             )
             stat["eval/score"].append(score)
             stat["eval/eval_lens"].append(eval_len)
@@ -163,7 +169,7 @@ def run(cfg: MainConfig):
     assert False
 
 
-def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: int, save_dir: str):
+def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: int, save_dir: str, proprio_wrapper_cfg=None, action_wrapper_cfg=None):
     from envs.robomimic_env import RobomimicEnvConfig
     from scripts.eval_sim import run_eval_seeds
 
@@ -171,7 +177,7 @@ def eval_sim(policy: HydraPolicy, dataset_path: str, eval_seed: int, num_eval: i
     env_cfg = pyrallis.load(RobomimicEnvConfig, open(env_cfg_path))  # type: ignore
 
     seeds = list(range(eval_seed, eval_seed + num_eval))
-    scores, eval_lens = run_eval_seeds(policy, env_cfg, seeds, 10, save_dir, False)
+    scores, eval_lens = run_eval_seeds(policy, env_cfg, seeds, 20, save_dir, False, proprio_wrapper_cfg=proprio_wrapper_cfg, action_wrapper_cfg=action_wrapper_cfg)
     scores = list(scores.values())
     eval_lens = list(eval_lens.values())
     return np.mean(scores), np.mean(eval_lens)

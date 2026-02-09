@@ -1,9 +1,14 @@
 from dataclasses import dataclass
 import numpy as np
+import scipy
+import inspect
 from scipy.spatial.transform import Rotation
 from scipy.spatial.transform import Slerp
 import matplotlib.pyplot as plt
 
+def wrap_delta_euler_angles(delta_euler):
+    # Wrap angles to the range [-pi, pi]
+    return (delta_euler + np.pi) % (2 * np.pi) - np.pi
 
 class MoveErrorPlot:
     def __init__(self, target):
@@ -75,7 +80,7 @@ def position_action_to_delta_action(
     curr_rot = Rotation.from_euler("xyz", curr_euler)
     target_rot = Rotation.from_euler("xyz", new_euler)
     delta_rot = target_rot * curr_rot.inv()
-    delta_euler = delta_rot.as_euler("xyz")
+    delta_euler = wrap_delta_euler_angles(delta_rot.as_euler("xyz"))  # use wrap to ensure we get the shortest angle difference
     return delta_pos, delta_euler
 
 
@@ -159,7 +164,8 @@ class WaypointReach:
         # next, process rot
         curr_rot = Rotation.from_euler("xyz", curr_euler)
         target_rot = Rotation.from_euler("xyz", self.target_euler)
-        delta_euler = (target_rot * curr_rot.inv()).as_euler("xyz")
+        
+        delta_euler = wrap_delta_euler_angles((target_rot * curr_rot.inv()).as_euler("xyz")) # use wrap to ensure we get the shortest angle difference
 
         rot_reached = np.linalg.norm(delta_euler) < self.cfg.rot_threshold
         if rot_reached:
@@ -189,7 +195,7 @@ class WaypointReach:
         # next, process rot
         curr_rot = Rotation.from_euler("xyz", curr_euler)
         target_rot = Rotation.from_euler("xyz", self.target_euler)
-        delta_euler = (target_rot * curr_rot.inv()).as_euler("xyz")
+        delta_euler = wrap_delta_euler_angles((target_rot * curr_rot.inv()).as_euler("xyz")) # use wrap to ensure we get the shortest angle difference
 
         if np.linalg.norm(delta_euler) < 0.02:
             delta_euler = np.zeros_like(delta_euler)
