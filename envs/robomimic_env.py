@@ -163,10 +163,21 @@ class RobomimicEnv:
         # gripper_open = -1 (no change) -> gripper_action: 0
         gripper_action = 0 if gripper_open == -1 else 1 - 2 * gripper_open 
         action = np.concatenate([ee_pos, ee_euler, [gripper_action]]).astype(np.float32)
+
+        prev_width = np.abs(self.obs["robot0_gripper_qpos"][0] - self.obs["robot0_gripper_qpos"][1])
         self.obs, self.reward, self.terminal, _ = self.env.step(action)
-        self.num_step += 1
+        curr_width = np.abs(self.obs["robot0_gripper_qpos"][0] - self.obs["robot0_gripper_qpos"][1])
+
+        # determine if gripper is closed or open after delta action
+        if gripper_open == 1: # if the delta gripper action is to open, we can consider the gripper to be open
+            self.curr_gripper_open = 1
+        elif gripper_open == 0: # if the gripper width change is small after a closing action, we can consider the gripper to be closed
+            if prev_width - curr_width < 0.002:
+                self.curr_gripper_open = 0
+
 
         # also set env to terminal if num_step is equal to or exceeds max_len
+        self.num_step += 1
         self.terminal = self.terminal or self.num_step >= self.cfg.max_len
 
         if self.verbose:
@@ -206,7 +217,7 @@ class RobomimicEnv:
             if recorder is not None:
                 obs_for_record = self.observe()
 
-            self.apply_action(delta_pos, delta_euler, -1) # do not change gripper during movement portion of waypoint, especially because curr_gripper_open is not properly updated during dense modes
+            self.apply_action(delta_pos, delta_euler, self.curr_gripper_open)
 
             if recorder is not None:
                 action = np.concatenate([delta_pos, delta_euler, [self.curr_gripper_open]])
@@ -232,7 +243,7 @@ class RobomimicEnv:
 
         assert gripper_open == 0 or gripper_open == 1
 
-        # curr_gripper_open is not properly updated during dense modes, so we should always call update_gripper to ensure the gripper state is correct
+        # we should always call update_gripper to ensure the gripper state is correct
         self.update_gripper(gripper_open, recorder, render)
         self.curr_gripper_open = gripper_open
 

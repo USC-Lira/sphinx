@@ -57,11 +57,10 @@ def reformat_episode(data, start, end):
                 dtype=np.float32,
             ),
             "agentview_image": data["image"][t].astype(np.uint8),
-            "object": data["object"][t].astype(np.float32),
-            "target/position": data["target/position"][t].astype(np.float32),
-            "target/orientation": data["target/orientation"][t].astype(np.float32),
-            "target/orientation_eul": data["target/orientation_eul"][t].astype(np.float32),
         }
+        for key in ["object", "target/position", "target/orientation", "target/orientation_eul"]:
+            if key in data: 
+                obs[key] = data[key][t].astype(np.float32)
         if "robot0_eye_in_hand_image" in data:
             obs["robot0_eye_in_hand_image"] = data["robot0_eye_in_hand_image"][t].astype(np.uint8)
             

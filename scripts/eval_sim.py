@@ -144,9 +144,6 @@ class EvalHydraProc:
 
             freeze_counter = 0
 
-            # Keep track of evaluation progress per seed
-            pbar = tqdm(desc=f"Eval seed {seed}", unit=" step")
-
             while not env.terminal:
                 # NOTE: obs["obs"] should be a cpu tensor because it
                 # is more complicated to move cuda tensors around.
@@ -228,8 +225,6 @@ class EvalHydraProc:
                 if freeze_counter >= 10:
                     print(f"Terminating early due to freeze at step {env.num_step} for seed {seed}")
                     break
-
-                pbar.update(1)
 
             if recorder is not None:
                 recorder.add_numpy(env.observe(), ["agentview_image"])

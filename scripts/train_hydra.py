@@ -37,6 +37,7 @@ class MainConfig(common_utils.RunConfig):
     # log
     save_dir: str = None
     use_wb: int = 0
+    train_policies: str = "all"
 
 
 def run(cfg: MainConfig):
@@ -117,7 +118,16 @@ def run(cfg: MainConfig):
                 ) = policy.loss(batch)
 
                 ### combine losses ###
-                total_loss = dense_loss + waypoint_pose_loss + waypoint_gripper_loss + mode_loss
+                if cfg.train_policies == "dense_only":
+                    total_loss = dense_loss + mode_loss
+                    waypoint_pose_loss = torch.tensor(0.0, device=waypoint_pose_loss.device)
+                    waypoint_gripper_loss = torch.tensor(0.0, device=waypoint_gripper_loss.device)
+                elif cfg.train_policies == "waypoint_only":
+                    total_loss = waypoint_pose_loss + waypoint_gripper_loss + mode_loss
+                    dense_loss = torch.tensor(0.0, device=dense_loss.device)
+                else: 
+                    dense_loss /= cfg.dp.dense_prediction_horizon
+                    total_loss = dense_loss + waypoint_pose_loss + waypoint_gripper_loss + mode_loss
 
                 optim.zero_grad()
                 total_loss.backward()

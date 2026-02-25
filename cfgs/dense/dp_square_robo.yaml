@@ -1,5 +1,5 @@
 dataset:
-  path: ../data_sphinx/square/
+  path: ../data_robomimic/square/dense/demos/
   camera_views: agentview_image+robot0_eye_in_hand_image
   predict_mode: 0
 dp:
@@ -10,7 +10,7 @@ dp:
   use_ddpm: 0
 is_sim: 1
 norm_action: 0
-num_epoch: 5
+num_epoch: 20
 epoch_len: 50000
 use_ema: 1
 ema_tau: 0.01
@@ -20,4 +20,4 @@ weight_decay: 1e-6
 cosine_schedule: 1
 lr_warm_up_steps: 500
 use_wb: 1
-save_dir: exps/dense/sphinx
+save_dir: exps/dense/robo_dense/

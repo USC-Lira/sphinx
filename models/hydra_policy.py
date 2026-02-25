@@ -8,6 +8,7 @@ import common_utils
 from models.dp_net import MultiviewCondUnet, MultiviewCondUnetConfig
 from models.action_normalizer import ActionNormalizer
 from models.diffusion_policy import DDPMConfig, DDIMConfig
+from models.mlp import create_mlp
 import torch.nn.functional as F
 
 
@@ -20,9 +21,13 @@ class HydraPolicyConfig:
     dense_action_horizon: int = 8
     dense_prediction_horizon: int = 16
     shift_pad: int = 4
-    # arch
+    
+    # encoder
     cond_unet: MultiviewCondUnetConfig = field(default_factory=lambda: MultiviewCondUnetConfig())
 
+    # arch
+    waypoint_net_arch: list[int] = field(default_factory=lambda: [])
+    mode_net_arch: list[int] = field(default_factory=lambda: [])
 
 class HydraPolicy(nn.Module):
     def __init__(
@@ -65,8 +70,15 @@ class HydraPolicy(nn.Module):
 
         ### waypoint and mode heads ###
         embed_dim = self.net.encoder.repr_dim
-        self.waypoint_head = nn.Linear(embed_dim, action_dim)
-        self.mode_head = nn.Linear(embed_dim, 3)  # waypoint, dense, or terminate
+        self.waypoint_head = create_mlp(
+            embed_dim, action_dim, cfg.waypoint_net_arch
+        )
+        self.mode_head = create_mlp(
+            embed_dim, 3, cfg.mode_net_arch
+        )  # waypoint, dense, or terminate
+        
+        # self.waypoint_head = nn.Linear(embed_dim, action_dim)
+        # self.mode_head = nn.Linear(embed_dim, 3)  # waypoint, dense, or terminate
 
         if cfg.use_ddpm:
             self.noise_scheduler = DDPMScheduler(
@@ -193,7 +205,7 @@ class HydraPolicy(nn.Module):
         waypoint_actions = batch.action["waypoint_action"]
         target_modes = batch.action["target_mode"]
 
-        ### dense pred ###
+        ### DENSE PRED ###
         dense_actions = self.dense_action_normalizer.normalize(dense_actions)
         assert dense_actions.min() >= -1.001 and dense_actions.max() <= 1.001
 
@@ -209,6 +221,7 @@ class HydraPolicy(nn.Module):
         noisy_dense_actions = self.noise_scheduler.add_noise(dense_actions, noise, timesteps)  # type: ignore
 
         noise_pred, obs_emb = self.net.predict_noise(obs, noisy_dense_actions, timesteps)
+        assert noise_pred.shape == noise.shape
         dense_loss = nn.functional.mse_loss(noise_pred, noise, reduction="none").sum(2)
 
         assert "valid_dense_action" in batch.obs
@@ -217,14 +230,16 @@ class HydraPolicy(nn.Module):
         dense_loss = (dense_loss * valid_dense_action).sum(1) / valid_dense_action.sum(1)
         ###
 
-        ### waypoint pred ###
+        ### WAYPOINT PRED ###
         waypoint_actions_logits = self.waypoint_head(obs_emb)
         gripper_actions_logits = waypoint_actions_logits[:, -1]
         waypoint_pose_loss = nn.functional.mse_loss(
             waypoint_actions_logits[:, :-1], waypoint_actions[:, :-1]
         )
         waypoint_gripper_loss = F.binary_cross_entropy_with_logits(
-            gripper_actions_logits, waypoint_actions[:, -1]
+            gripper_actions_logits, 
+            waypoint_actions[:, -1], 
+            pos_weight=(waypoint_actions[:, -1] == 0).sum() / ((waypoint_actions[:, -1] == 1).sum() + 1e-6)
         )
         waypoint_gripper_preds = (nn.functional.sigmoid(gripper_actions_logits) > 0.5).float()
         waypoint_gripper_acc = (
@@ -232,10 +247,21 @@ class HydraPolicy(nn.Module):
         )
         ###
 
-        ### mode pred ###
+        ### MODE PRED ###
         target_modes_logits = self.mode_head(obs_emb)
-        mode_loss = F.cross_entropy(target_modes_logits, target_modes)
-        # print(f"target mode logits: {target_modes_logits}\ntarget modes: {target_modes}\nmode loss: {mode_loss}")
+
+        # weigh the waypoint and dense loss evenly
+        freqs = torch.bincount(target_modes, minlength=3)
+        weight=torch.tensor([
+                (freqs[0] + freqs[1]) / 2.0, 
+                (freqs[0] + freqs[1]) / 2.0,
+                freqs[2],
+            ]).to(target_modes.device)
+        mode_loss = F.cross_entropy(
+            target_modes_logits, 
+            target_modes, 
+        )
+        
         target_modes_pred = nn.functional.softmax(target_modes_logits, dim=1).argmax(dim=1)
         mode_acc = (target_modes_pred == target_modes).float().mean().item()
         ###

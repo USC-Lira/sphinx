@@ -26,9 +26,14 @@ class InputProcessor:
         processed_obs = {}
         for k, v in obs.items():
             if k == "proprio":
-                processed_obs["prop"] = torch.from_numpy(v.astype(np.float32))
                 if self.proprio_wrapper is not None:
-                    processed_obs["prop"] = torch.from_numpy(self.proprio_wrapper.process_for_policy(v, is_delta=False).astype(np.float32))
+                    processed_obs["prop"] = torch.from_numpy(
+                        self.proprio_wrapper.process_for_policy(
+                            v, is_delta=False
+                        ).astype(np.float32)
+                    )
+                else:
+                    processed_obs["prop"] = torch.from_numpy(v.astype(np.float32))
 
             if k not in self.camera_names:
                 continue
@@ -91,6 +96,8 @@ class HydraDataset:
         self.input_processor = InputProcessor(self.camera_views, cfg.image_size, self.proprio_euler_quat_wrapper)
 
         self.episodes: list[list[dict]] = self._load_and_process_episodes(cfg.path)
+        self.analyze_gripper_opens()
+        self.analyze_modes()
         self.idx2entry = {}  # map from a single number to
         for episode_idx, episode in enumerate(self.episodes):
             for step_idx in range(len(episode)):
@@ -132,7 +139,7 @@ class HydraDataset:
 
         all_episodes: list[list[dict]] = []
 
-        TERMINATE_WINDOW = 0
+        TERMINATE_WINDOW = 1
 
         for episode_idx, f in enumerate(sorted(npz_files)):
             success_msg = ""
@@ -150,7 +157,7 @@ class HydraDataset:
                         next_timestep = raw_episode[t + 1] if (t + 1 < len(raw_episode)) else timestep
                         
                         # waypoint action is target position, not delta
-                        waypoint_action = next_timestep["obs"]["proprio"][:7]
+                        waypoint_action = next_timestep["obs"]["proprio"][:7].copy()
                         waypoint_action[-1] = dense_action[-1]  # keep the gripper action the same
                 else:
                     waypoint_action = timestep["action"]
@@ -183,10 +190,11 @@ class HydraDataset:
                 if not success_msg and timestep.get("reward", 0) > 0:
                     success_msg = f", success since {len(episode)}"
 
-                print("proprio:{}\ntarget_mode:{}\nwaypoint_action:{}\ndense_action:{}\n".format(
-                    processed_timestep["prop"], processed_timestep["target_mode"],
-                    processed_timestep["waypoint_action"], processed_timestep["dense_action"]
-                ))
+                if episode_idx == 1: 
+                    print("proprio:{}\ntarget_mode:{}\nwaypoint_action:{}\ndense_action:{}\n".format(
+                        processed_timestep["prop"], processed_timestep["target_mode"],
+                        processed_timestep["waypoint_action"], processed_timestep["dense_action"]
+                    ))
 
             print(f"episode {episode_idx}, len: {len(episode)}" + success_msg)
             all_episodes.append(episode)
@@ -212,6 +220,39 @@ class HydraDataset:
         self.action_min = action_min
         self.action_max = action_max
         return action_min, action_max
+    
+    # Print out the number of steps for each modes in the dataset
+    def analyze_modes(self):
+        mode_counts = defaultdict(int)
+        for episode in self.episodes:
+            for timestep in episode:
+                mode_counts[timestep["target_mode"].item()] += 1
+
+        print(f"Mode counts:")
+        for mode, count in mode_counts.items():
+            print(f"  Mode {mode}: {count} steps")
+    
+    # Print out the number of gripper open and close actions in the dataset for dense and waypoint modes
+    def analyze_gripper_opens(self): 
+        open_waypoint_count = 0
+        close_waypoint_count = 0
+        open_dense_count = 0
+        close_dense_count = 0
+
+        for episode in self.episodes:
+            for timestep in episode:
+                if timestep["waypoint_action"][-1] > 0.5:
+                    open_waypoint_count += 1
+                else:
+                    close_waypoint_count += 1
+                if timestep["dense_action"][-1] < 0.5:
+                    open_dense_count += 1
+                else:
+                    close_dense_count += 1
+
+        print(f"Gripper open/close counts:")
+        print(f"  Waypoint actions - Open: {open_waypoint_count}, Close: {close_waypoint_count}")
+        print(f"  Dense actions - Open: {open_dense_count}, Close: {close_dense_count}")
 
     def _convert_to_batch(self, samples, device):
         batch = {}

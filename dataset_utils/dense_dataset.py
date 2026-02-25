@@ -68,6 +68,7 @@ class DenseDataset:
         self.load_only_one = load_only_one
         self.camera_views = cfg.camera_views.split("+")
         self.input_processor = DenseInputProcessor(self.camera_views, cfg.image_size)
+        self.path = cfg.path
 
         self.episodes: list[list[dict]] = self._load_and_process_episodes(cfg.path, cfg.num_data)
         self.idx2entry = {}  # map from a single number to
@@ -126,6 +127,8 @@ class DenseDataset:
                 if self.cfg.predict_mode:
                     action = np.zeros(8)
                     action[:7] = timestep["action"]
+                    if "data_sphinx" not in self.path:
+                        action[6] = 1.0 if action[6] < 0 else 0.0 # FIXME: this is a hack to fix hydra data
 
                     if t > len(raw_episode) - TERMINATE_WINDOW:
                         action[7] = ActMode.Terminate.value
